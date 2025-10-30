@@ -14,6 +14,8 @@
 
 from .llama     import FastLlamaModel
 from .loader    import FastLanguageModel, FastVisionModel, FastTextModel, FastModel
+from .loaderv2  import FastLanguageModelV2
+from .llamav2   import FastLlamaModelV2
 from .mistral   import FastMistralModel
 from .qwen2     import FastQwen2Model
 from .qwen3     import FastQwen3Model
