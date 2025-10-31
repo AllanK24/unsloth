@@ -1725,6 +1725,17 @@ def patch_peft_fast_inference(model):
         model.load_lora = functools.partial(load_lora, model)
     pass
 
+### ADDED: Patch for QuanTA
+def patch_quanta_fast_inference(model):
+    vllm_engine = getattr(model.model, "vllm_engine", None)
+    if vllm_engine is not None:
+        model.vllm_engine = model.model.vllm_engine
+        model.fast_generate = model.model.fast_generate
+        model.fast_generate_batches = model.model.fast_generate_batches
+
+        # Removed the LoRA savings
+    pass
+
 def error_out_no_vllm(*args, **kwargs):
     raise NotImplementedError("Unsloth: vLLM is not yet supported for fast inference for this model! Please use `.generate` instead")
 

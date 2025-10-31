@@ -26,7 +26,7 @@ from .llama   import FastLlamaModel, logger
 from .llamav2 import FastLlamaModelV2, logger
 from .mistral import FastMistralModel
 from .qwen2   import FastQwen2Model
-from .qwen3   import FastQwen3Model
+from .qwen3v2   import FastQwen3ModelV2
 from .qwen3_moe import FastQwen3MoeModel
 from .cohere  import FastCohereModel
 from transformers import AutoConfig
@@ -113,8 +113,8 @@ DISABLE_SDPA_MODEL_NAMES = [
     "gemma3,", # Add comma bc gemma3 will match gemma3n
 ]
 
-
-class FastLanguageModelV2(FastLlamaModel):
+### CHANGED BASE CLASS TO FastLlamaModelV2
+class FastLanguageModelV2(FastLlamaModelV2):
     @staticmethod
     def from_pretrained(
         model_name                 = "unsloth/Llama-3.2-1B-Instruct",
@@ -415,7 +415,8 @@ class FastLanguageModelV2(FastLlamaModel):
                     f'Try `pip install --upgrade "transformers>=4.50.3"`\n'\
                     f"to obtain the latest transformers build, then restart this session."\
                 )
-            dispatch_model = FastQwen3Model if model_type == "qwen3" else FastQwen3MoeModel
+            ### MODIFIED CODE HERE FOR QWEN3
+            dispatch_model = FastQwen3ModelV2 if model_type == "qwen3" else FastQwen3MoeModel
         # elif model_type == "falcon_h1":
         #     dispatch_model = FastFalconH1Model
         #     if not SUPPORTS_FALCON_H1:

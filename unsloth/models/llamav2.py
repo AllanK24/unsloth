@@ -19,6 +19,7 @@ import functools
 from typing import Any, Dict, Optional, Tuple, List, Union
 from ._utils import *
 from ._utils import patch_unsloth_smart_gradient_checkpointing
+from ._utils import patch_quanta_fast_inference
 from ._utils import __version__, importlib_version
 from ._utils import move_to_device
 from ._utils import _prepare_model_for_qat
@@ -81,6 +82,8 @@ from transformers import AutoTokenizer, AutoModelForCausalLM, AutoModelForSequen
 from transformers.models.auto.modeling_auto import MODEL_FOR_CAUSAL_LM_MAPPING
 from transformers import set_seed as transformers_set_seed
 from peft import LoraConfig, TaskType, get_peft_model as _get_peft_model
+from quanta.quanta.quanta.tuners import QuanTAConfig
+from quanta.quanta.quanta.mapping import get_peft_model as _get_quanta_peft_model
 from peft import PeftModelForCausalLM, PeftModelForSequenceClassification
 from ..save import patch_saving_functions
 import re, os, inspect, math, sys
@@ -2751,197 +2754,52 @@ class FastLlamaModelV2:
     @staticmethod
     def get_quanta_model(
         model,
+        per_dim_features: list[int] = None, # List of the number of features per dimension. If not provided, the features are equally divided.
         d: int                   = 1, # QuanTA number of dimensions
         quanta_dropout: float      = 0.0, # QuanTA dropout
-        per_dim_features: list[int] = None, # List of the number of features per dimension. If not provided, the features are equally divided.
-        per_dim_features2: list[int] = None, # List of the number of features per dimension for the output. If not provided, the features are set to per_dim_features.
-        sum_mode: bool = False, # Set this to True if the quanta is in sum mode
+        ### NOT SUPPORTED YET ###
+        # per_dim_features2: list[int] = None, # List of the number of features per dimension for the output. If not provided, the features are set to per_dim_features.
+        # sum_mode: bool = False, # Set this to True if the quanta is in sum mode
+        ###
         bias: str = "none", # Bias type, can be "none", "all", "lora_only"
         target_modules      = ["q_proj", "k_proj", "v_proj", "o_proj",
                                "gate_proj", "up_proj", "down_proj"],
-        layers_to_transform = None,
-        layers_pattern      = None,
         use_gradient_checkpointing = "unsloth",
         random_state        = 3407,
-        max_seq_length      = 2048, # not used anymore
-        use_rslora          = False,
         modules_to_save     = None,
         temporary_location  = "_unsloth_temporary_saved_buffers",
-        qat_scheme          = None,
         **kwargs,
     ):
+        """
+        This function applies QuanTA adapters to the model.
+        Args:
+            model: The model to apply QuanTA adapters to.
+            per_dim_features: List of the number of features per dimension. If not provided, the features are equally divided.
+            d: QuanTA number of dimensions.
+            quanta_dropout: QuanTA dropout.
+            bias: Bias type, can be "none", "all", "lora_only".
+            target_modules: List of target modules to apply QuanTA adapters to.
+            use_gradient_checkpointing: Whether to use Unsloth's gradient checkpointing.
+            random_state: Random seed for reproducibility.
+            # modules_to_save: Make lm_head and embed_tokens fully trainable. Supports only these two modules. (IGNORED FOR NOW)
+            temporary_location: Temporary location to save offloaded modules.
+            **kwargs: Additional arguments for QuanTAConfig.
+        Returns:
+            model: PeftModelForCausalLM with QuanTA adapters applied.
+        """
+        
         transformers_set_seed(random_state)
 
         if use_gradient_checkpointing == "unsloth":
             patch_unsloth_smart_gradient_checkpointing(dtype = model.get_input_embeddings().weight.dtype)
 
         if d < 1:
-            raise TypeError(f"Unsloth: Dimension of {str(d)} must be larger than 0.")
+            raise TypeError(f"QuAPT Unsloth: Dimension of {str(d)} must be larger than 0.")
 
         if isinstance(model, PeftModelForCausalLM) or isinstance(model, PeftModelForSequenceClassification):
-            # Check if exactly the same and then pass through!
-            assert(hasattr(model, "peft_config"))
-
-            peft_config = model.peft_config["default"].to_dict()
-            
-            ### MODIFIED BLOCK, NEEDS TO BE TESTED ###
-            print("peft_config:", peft_config)
-            return
-            # check_parameters = [
-            #     "r", "lora_alpha", "lora_dropout",
-            #     "bias", "layers_to_transform", "layers_pattern",
-            #     "use_rslora", "init_lora_weights",
-            # ]
-            check_all = True
-            # for param in check_parameters:
-            #     check_all = check_all and (peft_config[param] == eval(param))
-            # pass
-
-            # Check save_modules
-            old_target_modules = list(peft_config["target_modules"])
-            modules_to_save = peft_config["modules_to_save"]
-            if modules_to_save is None: modules_to_save = {}
-            modules_to_save = list(modules_to_save)
-            old_target_modules += modules_to_save
-
-            # Combine all
-            new_target_modules = list(target_modules) + \
-                list(modules_to_save if modules_to_save is not None else [])
-
-            # Now check!
-            new_target_modules = set(new_target_modules)
-            check_all = check_all and (
-                len(set(old_target_modules) ^ new_target_modules) == 0
+            raise TypeError(
+                "QuAPT Unsloth: Your model already has QuanTA adapters."
             )
-
-            check_all = check_all and (
-                (loftq_config == {} or loftq_config is None) and \
-                (peft_config["loftq_config"] == {} or peft_config["loftq_config"] is None)
-            )
-
-            if check_all:
-                # Simply pass through!
-                logger.warning(
-                    "Unsloth: Already have LoRA adapters! We shall skip this step."
-                )
-
-                # Offload!
-                # [TODO] First offload lm_head and embed_tokens to CPU (should be disk!!)
-                if "embed_tokens" in new_target_modules:
-                    print("Unsloth: Training embed_tokens in mixed precision to save VRAM")
-
-                    new_dtype = model.get_input_embeddings().modules_to_save.default.weight.dtype
-                    if new_dtype == torch.float16:
-                        # See https://github.com/unslothai/unsloth/pull/1200
-                        # Tesla T4 must use float32 and not float16
-                        new_dtype = torch.float32
-                    pass
-
-                    model.get_input_embeddings().modules_to_save.default\
-                        .to(device = DEVICE_TYPE_TORCH, dtype = new_dtype, non_blocking = True)
-                    model.get_input_embeddings().modules_to_save.default.requires_grad_(True)
-
-                    # [TODO] Move old embed_tokens to CPU - should be disk!
-                    model.get_input_embeddings().original_module\
-                        .to(device = "cpu", non_blocking = True)
-                    model.get_input_embeddings().original_module.requires_grad_(False)
-                pass
-
-                if "lm_head" in new_target_modules:
-                    print("Unsloth: Training lm_head in mixed precision to save VRAM")
-
-                    new_dtype = model.get_output_embeddings().modules_to_save.default.weight.dtype
-                    if new_dtype == torch.float16:
-                        # See https://github.com/unslothai/unsloth/pull/1200
-                        # Tesla T4 must use float32 and not float16
-                        new_dtype = torch.float32
-                    pass
-
-                    model.get_output_embeddings().modules_to_save.default\
-                        .to(device = DEVICE_TYPE_TORCH, dtype = new_dtype, non_blocking = True)
-                    model.get_output_embeddings().modules_to_save.default.requires_grad_(True)
-
-                    # [TODO] Move old lm_head to CPU - should be disk!
-                    model.get_output_embeddings().original_module\
-                        .to(device = "cpu", non_blocking = True)
-                    model.get_output_embeddings().original_module.requires_grad_(False)
-                pass
-
-                return model
-            else:
-                raise TypeError(
-                    "Unsloth: Your model already has LoRA adapters. Your new parameters are different."
-                )
-            pass
-        pass
-
-        if loftq_config is None: loftq_config = {}
-
-        signature = str(inspect.signature(LoraConfig))
-        SUPPORTS_LOFTQ  = "loftq_config" in signature
-        SUPPORTS_RSLORA = "use_rslora"   in signature
-
-        if lora_dropout != 0:
-            logger.warning_once(
-                f"Unsloth: Dropout = 0 is supported for fast patching. You are using dropout = {lora_dropout}.\n"\
-                f"Unsloth will patch all other layers, except LoRA matrices, causing a performance hit."
-            )
-        pass
-
-        if bias != "none":
-            logger.warning_once(
-                f"Unsloth: bias = `none` is supported for fast patching. You are using bias = {bias}.\n"\
-                f"Unsloth will patch all other layers, except LoRA matrices, causing a performance hit."
-            )
-        pass
-
-        if not (type(init_lora_weights) is bool or \
-            init_lora_weights == "gaussian" or init_lora_weights == "loftq"):
-            raise ValueError(
-                'Unsloth: `init_lora_weights` must be either [True, False, "gaussian", "loftq"].'
-            )
-        pass
-
-        if init_lora_weights == "loftq":
-
-            if not SUPPORTS_LOFTQ:
-                import peft
-                raise RuntimeError(
-                    f"Unsloth: Your PEFT version of {peft.__version__} does not support LoftQ init.\n"\
-                    "Please install PEFT 0.7.2 or higher.\n"\
-                    "You can also install from source: `pip install git+https://github.com/huggingface/peft.git"
-                )
-            pass
-
-            if loftq_config == {}:
-                from peft import LoftQConfig
-                logger.warning_once(
-                    "Unsloth: init_lora_weights = `loftq` is set, but `loftq_config` is None.\n"\
-                    "We shall use `loftq_config = LoftQConfig(loftq_bits = 4, loftq_iter = 1)`."
-                )
-                loftq_config = LoftQConfig(loftq_bits = 4, loftq_iter = 1)
-            pass
-
-            if hasattr(model.config, "quantization_config"):
-                raise ValueError(
-                    "Unsloth: You are using `loftq` init, yet `load_in_4bit = True` was set.\n"\
-                    "Reload your model without any quantization by setting `load_in_4bit = False`."
-                )
-            pass
-        pass
-
-        assert(type(use_rslora) is bool)
-        if use_rslora:
-            if not SUPPORTS_RSLORA:
-                # We manually check for PEFT
-                import peft
-                raise RuntimeError(
-                    f"Unsloth: Your PEFT version of {peft.__version__} does not support `use_rslora`.\n"\
-                    "Please install PEFT 0.7.2 or higher.\n"\
-                    "You can also install from source: `pip install git+https://github.com/huggingface/peft.git"
-                )
-            pass
-        pass
 
         accepted_modules = frozenset(("q_proj", "k_proj", "v_proj", "o_proj",
                                       "gate_proj", "up_proj", "down_proj",),)
@@ -3047,35 +2905,20 @@ class FastLlamaModelV2:
                 raise NotImplementedError("Unsloth: Currently fast inference does not work with using biases for LoRA.")
         pass
 
-        # Does not get lora yet, so get name from model, not base model
-        is_classification = "Classification" in str(type(model))
-
         arguments = dict(
-            r                   = r,
-            lora_alpha          = lora_alpha,
+            d                   = d,
+            per_dim_features = per_dim_features,
+            quanta_dropout          = quanta_dropout,
             target_modules      = final_modules,
-            lora_dropout        = lora_dropout,
             bias                = bias,
-            task_type           = TaskType.CAUSAL_LM if not is_classification else TaskType.SEQ_CLS,
-            layers_to_transform = layers_to_transform,
-            init_lora_weights   = init_lora_weights,
-            loftq_config        = loftq_config,
-            use_rslora          = use_rslora,
-            modules_to_save     = modules_to_save,
+            # modules_to_save     = modules_to_save, ### IGNORED FOR NOW ###
             **kwargs,
         )
-        if not SUPPORTS_LOFTQ:  del arguments["loftq_config"]
-        if not SUPPORTS_RSLORA: del arguments["use_rslora"]
 
         _saved_temp_tokenizer = model._saved_temp_tokenizer
 
-        lora_config = LoraConfig(**arguments)
-        # First offload lm_head and embed_tokens to disk
-        input_embeddings_device  = model.get_input_embeddings().weight.device
-        if is_classification:
-             output_embeddings_device = model.score.weight.device
-        else:
-            output_embeddings_device = model.get_output_embeddings().weight.device
+        quanta_config = QuanTAConfig(**arguments)
+        print("QuanTA Config Initialized:", quanta_config)
 
         if use_gradient_checkpointing == "unsloth":
             if train_embed_tokens:
@@ -3101,19 +2944,10 @@ class FastLlamaModelV2:
             pass
         pass
 
-        model = _get_peft_model(model, lora_config)
-        # Fix LoraConfig.auto_mapping is None
-        fix_lora_auto_mapping(model)
-
-        # Apply QAT + LoRA if specified
-        if qat_scheme is not None:
-            print("Unsloth: Applying QAT to mitigate quantization degradation")
-            model = _prepare_model_for_qat(model, qat_scheme)
-        pass
+        ### Get the QuanTA PEFT model ###
+        model = _get_quanta_peft_model(model, quanta_config)
 
         model._saved_temp_tokenizer = _saved_temp_tokenizer
-
-        model = FastLlamaModelV2.patch_peft_model(model, use_gradient_checkpointing)
 
         if train_embed_tokens:
             print("Unsloth: Training embed_tokens in mixed precision to save VRAM")
@@ -3169,7 +3003,8 @@ class FastLlamaModelV2:
             clean_gpu_cache()
         pass
 
-        patch_peft_fast_inference(model)
+        # Patch for QuanTA fast inference with vLLM
+        patch_quanta_fast_inference(model)
 
         # Add for_inference and for_training
         model.for_training  = functools.partial(FastLlamaModelV2.for_training,  model)
