@@ -2792,7 +2792,7 @@ class FastLlamaModelV2:
 
         if use_gradient_checkpointing == "unsloth":
             patch_unsloth_smart_gradient_checkpointing(dtype = model.get_input_embeddings().weight.dtype)
-
+        
         if d < 1:
             raise TypeError(f"QuAPT Unsloth: Dimension of {str(d)} must be larger than 0.")
 
@@ -2901,8 +2901,9 @@ class FastLlamaModelV2:
             if modules_to_save is not None:
                 raise NotImplementedError("Unsloth: Currently fast inference does not work with training embeddings or lm_head.")
 
-            if bias != "none":
-                raise NotImplementedError("Unsloth: Currently fast inference does not work with using biases for LoRA.")
+            ### WHAT TO DO HERE? ###
+            # if bias != "none":
+            #     raise NotImplementedError("Unsloth: Currently fast inference does not work with using biases for LoRA.")
         pass
 
         arguments = dict(
@@ -2984,19 +2985,35 @@ class FastLlamaModelV2:
 
         # Patch tokenizer to pad to the right
         internal_model = model
+        # while hasattr(internal_model, "model"):
+        #     if hasattr(internal_model, "_saved_temp_tokenizer"):
+        #         internal_model._saved_temp_tokenizer.padding_side = "right"
+        #     pass
+        #     # Also set is_loaded_in_8bit to disable incorrect DDP
+        #     # internal_model.is_loaded_in_8bit = True
+        #     internal_model = internal_model.model
+        # pass
+        # if hasattr(internal_model, "_saved_temp_tokenizer"):
+        #     internal_model._saved_temp_tokenizer.padding_side = "right"
+        # pass
+        # # Also set is_loaded_in_8bit to disable incorrect DDP
+        # # internal_model.is_loaded_in_8bit = True
         while hasattr(internal_model, "model"):
             if hasattr(internal_model, "_saved_temp_tokenizer"):
                 internal_model._saved_temp_tokenizer.padding_side = "right"
             pass
-            # Also set is_loaded_in_8bit to disable incorrect DDP
-            internal_model.is_loaded_in_8bit = True
+            # Only set is_loaded_in_8bit if the model is actually 8-bit quantized
+            # Setting this for non-quantized models causes HF/PEFT to think it's a purely quantized model
+            if not hasattr(internal_model, "is_loaded_in_8bit"):
+                internal_model.is_loaded_in_8bit = getattr(internal_model, "is_loaded_in_8bit", False)
             internal_model = internal_model.model
         pass
         if hasattr(internal_model, "_saved_temp_tokenizer"):
             internal_model._saved_temp_tokenizer.padding_side = "right"
         pass
-        # Also set is_loaded_in_8bit to disable incorrect DDP
-        internal_model.is_loaded_in_8bit = True
+        # Only set is_loaded_in_8bit if the model is actually 8-bit quantized
+        if not hasattr(internal_model, "is_loaded_in_8bit"):
+            internal_model.is_loaded_in_8bit = getattr(internal_model, "is_loaded_in_8bit", False)
 
         # Clear deleted GPU items
         for _ in range(3):
