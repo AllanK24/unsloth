@@ -82,8 +82,8 @@ from transformers import AutoTokenizer, AutoModelForCausalLM, AutoModelForSequen
 from transformers.models.auto.modeling_auto import MODEL_FOR_CAUSAL_LM_MAPPING
 from transformers import set_seed as transformers_set_seed
 from peft import LoraConfig, TaskType, get_peft_model as _get_peft_model
-from quanta.tuners import QuanTAConfig
-from quanta.mapping import get_peft_model as _get_quanta_peft_model
+from quanta.quanta.quanta.tuners import QuanTAConfig
+from quanta.quanta.quanta.mapping import get_peft_model as _get_quanta_peft_model
 from peft import PeftModelForCausalLM, PeftModelForSequenceClassification
 from ..save import patch_saving_functions
 import re, os, inspect, math, sys
@@ -1735,7 +1735,8 @@ def unsloth_fast_generate(
     *args,
     **kwargs,
 ):
-    FastLlamaModel.for_inference(self)
+    # FastLlamaModel.for_inference(self)
+    FastLlamaModelV2.for_inference(self)
 
     dtype = _get_dtype(dtype_from_config(self.config))
 
@@ -1782,7 +1783,8 @@ def unsloth_fast_generate(
     #     accelerate.utils.operations.send_to_device = accelerate_old_send_to_device
     # pass
 
-    FastLlamaModel.for_training(self)
+    # FastLlamaModel.for_training(self)
+    FastLlamaModelV2.for_training(self)
 
     return output
 pass
