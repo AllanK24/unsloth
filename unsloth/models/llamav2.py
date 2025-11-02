@@ -82,8 +82,8 @@ from transformers import AutoTokenizer, AutoModelForCausalLM, AutoModelForSequen
 from transformers.models.auto.modeling_auto import MODEL_FOR_CAUSAL_LM_MAPPING
 from transformers import set_seed as transformers_set_seed
 from peft import LoraConfig, TaskType, get_peft_model as _get_peft_model
-from quanta.quanta.quanta.tuners import QuanTAConfig
-from quanta.quanta.quanta.mapping import get_peft_model as _get_quanta_peft_model
+from quanta.tuners import QuanTAConfig
+from quanta.mapping import get_peft_model as _get_quanta_peft_model
 from peft import PeftModelForCausalLM, PeftModelForSequenceClassification
 from ..save import patch_saving_functions
 import re, os, inspect, math, sys
@@ -2754,8 +2754,8 @@ class FastLlamaModelV2:
     @staticmethod
     def get_quanta_model(
         model,
-        per_dim_features: list[int] = None, # List of the number of features per dimension. If not provided, the features are equally divided.
         d: int                   = 1, # QuanTA number of dimensions
+        per_dim_features: list[int] = None, # List of the number of features per dimension. If not provided, the features are equally divided.
         quanta_dropout: float      = 0.0, # QuanTA dropout
         ### NOT SUPPORTED YET ###
         # per_dim_features2: list[int] = None, # List of the number of features per dimension for the output. If not provided, the features are set to per_dim_features.
@@ -2911,6 +2911,7 @@ class FastLlamaModelV2:
             quanta_dropout          = quanta_dropout,
             target_modules      = final_modules,
             bias                = bias,
+            task_type       = TaskType.CAUSAL_LM,
             # modules_to_save     = modules_to_save, ### IGNORED FOR NOW ###
             **kwargs,
         )
