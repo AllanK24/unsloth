@@ -82,8 +82,8 @@ from transformers import AutoTokenizer, AutoModelForCausalLM, AutoModelForSequen
 from transformers.models.auto.modeling_auto import MODEL_FOR_CAUSAL_LM_MAPPING
 from transformers import set_seed as transformers_set_seed
 from peft import LoraConfig, TaskType, get_peft_model as _get_peft_model
-from quanta.quanta.quanta.tuners import QuanTAConfig
-from quanta.quanta.quanta.mapping import get_peft_model as _get_quanta_peft_model
+from quanta.tuners import QuanTAConfig
+from quanta.mapping import get_peft_model as _get_quanta_peft_model
 from peft import PeftModelForCausalLM, PeftModelForSequenceClassification
 from ..save import patch_saving_functions
 import re, os, inspect, math, sys
